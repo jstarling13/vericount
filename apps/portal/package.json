@@ -1,0 +1,41 @@
+{
+  "name": "@vericount/portal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^6.0.0",
+    "@vericount/ai": "workspace:*",
+    "@vericount/db": "workspace:*",
+    "@vericount/plaid": "workspace:*",
+    "@vericount/qbo": "workspace:*",
+    "@vericount/shared": "workspace:*",
+    "@vericount/pdf": "workspace:*",
+    "@vericount/slack": "workspace:*",
+    "@vericount/stripe-client": "workspace:*",
+    "clsx": "^2.1.1",
+    "next": "^14.2.29",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-plaid-link": "^3.5.2",
+    "resend": "^4.0.0",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.29",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3"
+  }
+}

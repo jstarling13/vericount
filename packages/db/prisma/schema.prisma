@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum Tier {
+  STARTER  // $79/mo
+  GROWTH   // $149/mo
+  PRO      // $299/mo
+}
+
+enum ClientStatus {
+  PENDING    // onboarding in progress
+  ACTIVE     // fully onboarded, billing active
+  SUSPENDED  // billing failed or paused
+  CHURNED    // cancelled
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  ERROR
+}
+
+enum ReportType {
+  MONTHLY
+  QUARTERLY_TAX
+}
+
+enum MessageSender {
+  CLIENT
+  BOOKKEEPER
+}
+
+// ─── Core Client ─────────────────────────────────────────
+
+model Client {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  businessName String
+  tier         Tier         @default(STARTER)
+  status       ClientStatus @default(PENDING)
+
+  // Stripe
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  // QuickBooks Online
+  qboRealmId      String? @unique
+  qboAccessToken  String?  // store encrypted in prod
+  qboRefreshToken String?  // store encrypted in prod
+  qboTokenExpiry  DateTime?
+
+  // Plaid
+  plaidItemId      String? @unique
+  plaidAccessToken String? // store encrypted in prod
+  plaidSyncCursor  String? // incremental transaction sync cursor — MUST persist between runs
+  plaidNeedsLogin  Boolean @default(false)  // set when ITEM_LOGIN_REQUIRED; cleared on successful reconnect
+
+  // External IDs
+  docusignEnvelopeId  String?
+  docusignSignedAt    DateTime?  // when the client signed the engagement letter
+  slackChannelId      String?
+  clerkUserId         String? @unique  // set after client claims their portal account
+
+  // Metadata
+  typeformResponseId String? @unique
+  onboardedAt        DateTime?
+  notes              String? @db.Text  // internal bookkeeper notes
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  plaidAccounts        PlaidAccount[]
+  transactions         Transaction[]
+  categorizationRules  CategorizationRule[]
+  reports              Report[]
+  taxEstimates         TaxEstimate[]
+  messages             Message[]
+  syncLogs             SyncLog[]
+  flaggedItems         FlaggedItem[]
+}
+
+// ─── Plaid Accounts ──────────────────────────────────────
+
+model PlaidAccount {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  plaidAccountId String   @unique
+  name           String
+  officialName   String?
+  type           String   // depository, credit, investment, etc.
+  subtype        String?  // checking, savings, etc.
+  mask           String?  // last 4 digits
+  currentBalance Decimal? @db.Decimal(12, 2)
+  lastSynced     DateTime?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  transactions Transaction[]
+
+  @@index([clientId])
+}
+
+// ─── Transactions ─────────────────────────────────────────
+
+model Transaction {
+  id                  String   @id @default(cuid())
+  clientId            String
+  client              Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accountId           String
+  account             PlaidAccount @relation(fields: [accountId], references: [id])
+  plaidTransactionId  String   @unique
+  qboTransactionId    String?  // set after pushed to QBO
+
+  date        DateTime
+  amount      Decimal  @db.Decimal(12, 2)  // positive = debit, negative = credit
+  description String
+  merchant    String?
+  pending     Boolean  @default(false)
+
+  // Categorization
+  plaidCategory   String?  // Plaid's raw category
+  qboCategory     String?  // QBO account name after categorization
+  categorySource  String?  // "rule", "plaid", "manual", "ai"
+  reviewed        Boolean  @default(false)
+
+  // QBO sync state
+  pushedToQbo    Boolean  @default(false)
+  pushedToQboAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, date])
+  @@index([clientId, pending, qboCategory])
+  @@index([clientId, pushedToQbo])
+}
+
+// ─── Categorization Rules ────────────────────────────────
+
+model CategorizationRule {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name       String
+  pattern    String   // regex pattern matched against description or merchant
+  qboCategory String  // QBO account/category to assign
+  isRegex    Boolean  @default(false)
+  priority   Int      @default(0)  // higher = evaluated first
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([clientId, isActive])
+}
+
+// ─── Reports ─────────────────────────────────────────────
+
+model Report {
+  id         String     @id @default(cuid())
+  clientId   String
+  client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type       ReportType
+  period     String     // "2025-01" for monthly, "2025-Q1" for quarterly
+
+  // Content
+  rawQboData  Json?    // raw P&L and balance sheet JSON from QBO
+  narrative   String?  @db.Text  // AI-generated plain-English summary
+  pdfKey      String?  // storage key / URL for the generated PDF
+
+  // Delivery
+  emailedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([clientId, type, period])
+  @@index([clientId])
+}
+
+// ─── Tax Estimates ────────────────────────────────────────
+
+model TaxEstimate {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  year        Int
+  quarter     Int      // 1–4
+  dueDate     DateTime
+
+  // Input figures
+  ytdRevenue   Decimal @db.Decimal(14, 2)
+  ytdExpenses  Decimal @db.Decimal(14, 2)
+  ytdNetIncome Decimal @db.Decimal(14, 2)
+
+  // Calculated estimates
+  seTax        Decimal @db.Decimal(12, 2)
+  federalEst   Decimal @db.Decimal(12, 2)
+  gaStateEst   Decimal @db.Decimal(12, 2)
+  totalEst     Decimal @db.Decimal(12, 2)
+  quarterlyAmt Decimal @db.Decimal(12, 2)  // totalEst / 4
+
+  alertSentAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  @@unique([clientId, year, quarter])
+  @@index([clientId])
+}
+
+// ─── Messages (client ↔ bookkeeper) ──────────────────────
+
+model Message {
+  id       String        @id @default(cuid())
+  clientId String
+  client   Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sender   MessageSender
+  content  String        @db.Text
+  readAt   DateTime?
+  createdAt DateTime     @default(now())
+
+  @@index([clientId, createdAt])
+  @@index([clientId, sender, readAt])
+}
+
+// ─── Sync Logs ────────────────────────────────────────────
+
+model SyncLog {
+  id          String     @id @default(cuid())
+  clientId    String
+  client      Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type        String     // "plaid", "qbo", "report", "tax"
+  status      SyncStatus @default(PENDING)
+  details     String?    @db.Text
+  errorMsg    String?    @db.Text
+  startedAt   DateTime   @default(now())
+  completedAt DateTime?
+
+  @@index([clientId, type])
+  @@index([startedAt])
+}
+
+// ─── Flagged Items (internal review queue) ────────────────
+
+model FlaggedItem {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type        String   // "uncategorized_tx", "qbo_error", "large_transaction", etc.
+  description String   @db.Text
+  referenceId String?  // e.g., transaction ID
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([clientId, resolved])
+  @@index([resolved, createdAt])
+}

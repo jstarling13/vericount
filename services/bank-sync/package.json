@@ -1,0 +1,27 @@
+{
+  "name": "@vericount/bank-sync",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vericount/ai": "workspace:*",
+    "@vericount/db": "workspace:*",
+    "@vericount/plaid": "workspace:*",
+    "@vericount/qbo": "workspace:*",
+    "@vericount/shared": "workspace:*",
+    "@vericount/slack": "workspace:*",
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3"
+  }
+}
