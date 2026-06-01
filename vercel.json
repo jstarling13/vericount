@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "turbo run build --filter=@vericount/dashboard",
+  "installCommand": "npm install -g pnpm && pnpm install",
+  "outputDirectory": "apps/dashboard/.next"
+}
